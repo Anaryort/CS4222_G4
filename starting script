@@ -1,0 +1,125 @@
+-- =========================================================
+-- 1) Departments
+-- =========================================================
+CREATE TABLE departments (
+    dept_no      SERIAL PRIMARY KEY,
+    dept_name    VARCHAR(100) NOT NULL UNIQUE,
+    main_office  VARCHAR(100) NOT NULL,
+    -- Will set chairman_ssn FK after professors table exists
+    chairman_ssn CHAR(9) UNIQUE
+);
+
+-- =========================================================
+-- 2) Professors
+--    Each professor works in exactly one department
+-- =========================================================
+CREATE TABLE professors (
+    ssn                CHAR(9) PRIMARY KEY,
+    prof_name          VARCHAR(100) NOT NULL,
+    age                INTEGER NOT NULL CHECK (age BETWEEN 18 AND 100),
+    gender             CHAR(1) NOT NULL CHECK (gender IN ('M','F','X')),
+    rank               VARCHAR(20) NOT NULL CHECK (rank IN ('Assistant','Associate','Full')),
+    research_specialty VARCHAR(120) NOT NULL,
+    dept_no            INTEGER NOT NULL,
+    CONSTRAINT fk_prof_dept
+        FOREIGN KEY (dept_no) REFERENCES departments(dept_no)
+            ON UPDATE CASCADE
+            ON DELETE RESTRICT
+);
+
+-- After professors exist: make department chairman reference a professor.
+-- (Basic FK only; "chair is in same department" rule would need a trigger,
+-- which we are intentionally not using here.)
+ALTER TABLE departments
+ADD CONSTRAINT fk_dept_chair
+FOREIGN KEY (chairman_ssn) REFERENCES professors(ssn)
+    ON UPDATE CASCADE
+    ON DELETE SET NULL;
+
+-- =========================================================
+-- 3) Graduate Students
+--    Each grad student has one major department and an optional student advisor
+-- =========================================================
+CREATE TABLE grad_students (
+    ssn             CHAR(9) PRIMARY KEY,
+    stu_name        VARCHAR(100) NOT NULL,
+    age             INTEGER NOT NULL CHECK (age BETWEEN 18 AND 100),
+    gender          CHAR(1) NOT NULL CHECK (gender IN ('M','F','X')),
+    degree_program  VARCHAR(10) NOT NULL CHECK (degree_program IN ('MS','PhD')),
+    major_dept_no   INTEGER NOT NULL,
+    advisor_ssn     CHAR(9),
+    CONSTRAINT fk_student_dept
+        FOREIGN KEY (major_dept_no) REFERENCES departments(dept_no)
+            ON UPDATE CASCADE
+            ON DELETE RESTRICT,
+    CONSTRAINT fk_student_advisor
+        FOREIGN KEY (advisor_ssn) REFERENCES grad_students(ssn)
+            ON UPDATE CASCADE
+            ON DELETE SET NULL,
+    CONSTRAINT chk_student_not_self_advisor
+        CHECK (advisor_ssn IS NULL OR advisor_ssn <> ssn)
+);
+
+-- =========================================================
+-- 4) Projects
+--    Each project is managed by exactly one professor (PI)
+-- =========================================================
+CREATE TABLE projects (
+    pno           SERIAL PRIMARY KEY,
+    sponsor_name  VARCHAR(80) NOT NULL,
+    start_date    DATE NOT NULL,
+    end_date      DATE NOT NULL,
+    budget        NUMERIC(12,2) NOT NULL CHECK (budget >= 0),
+    pi_prof_ssn   CHAR(9) NOT NULL,
+    CONSTRAINT fk_project_pi
+        FOREIGN KEY (pi_prof_ssn) REFERENCES professors(ssn)
+            ON UPDATE CASCADE
+            ON DELETE RESTRICT,
+    CONSTRAINT chk_dates
+        CHECK (end_date >= start_date)
+);
+
+-- =========================================================
+-- 5) Project_Faculty
+-- =========================================================
+CREATE TABLE project_faculty (
+    pno        INTEGER NOT NULL,
+    prof_ssn   CHAR(9)  NOT NULL,
+    role       VARCHAR(20) NOT NULL,  -- e.g., 'CO-PI' or 'Contributor'
+    PRIMARY KEY (pno, prof_ssn),
+    CONSTRAINT fk_pf_project
+        FOREIGN KEY (pno) REFERENCES projects(pno)
+            ON UPDATE CASCADE
+            ON DELETE CASCADE,
+    CONSTRAINT fk_pf_prof
+        FOREIGN KEY (prof_ssn) REFERENCES professors(ssn)
+            ON UPDATE CASCADE
+            ON DELETE RESTRICT
+);
+
+-- =========================================================
+-- 6) Project_Students (Graduate students working on projects)
+--    Many-to-many between projects and grad_students
+-- =========================================================
+CREATE TABLE project_students (
+    pno      INTEGER NOT NULL,
+    stu_ssn  CHAR(9)  NOT NULL,
+    role     VARCHAR(20) NOT NULL DEFAULT 'RA',
+    PRIMARY KEY (pno, stu_ssn),
+    CONSTRAINT fk_ps_project
+        FOREIGN KEY (pno) REFERENCES projects(pno)
+            ON UPDATE CASCADE
+            ON DELETE CASCADE,
+    CONSTRAINT fk_ps_student
+        FOREIGN KEY (stu_ssn) REFERENCES grad_students(ssn)
+            ON UPDATE CASCADE
+            ON DELETE RESTRICT
+);
+
+
+CREATE INDEX idx_prof_dept ON professors(dept_no);
+CREATE INDEX idx_stud_major_dept ON grad_students(major_dept_no);
+CREATE INDEX idx_pf_prof ON project_faculty(prof_ssn);
+CREATE INDEX idx_ps_student ON project_students(stu_ssn);
+
+
