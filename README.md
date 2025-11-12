@@ -96,7 +96,4 @@ javac -cp .:postgresql-42.7.4.jar App.java
 java -cp .:postgresql-42.7.4.jar App
 ```
 
-## What to submit
-- A **doc/pdf** containing: ER diagram, schema diagram summary, `CREATE TABLE` DDL, function/trigger source, and contribution percentages.
-- `App.java` (Java source).
-- A separate list of member contributions (%). You can start from `CONTRIBUTIONS_TEMPLATE.txt`.
+
