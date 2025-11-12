@@ -12,67 +12,60 @@
 ## ER Diagram (Mermaid)
 ```mermaid
 erDiagram
-  Department {
-    varchar(10) dept_no PK
-    text dept_name
-    text main_office
-    char(9) chair_ssn UNIQUE FK
-  }
+    PROFESSOR {
+        string ssn PK
+        string name
+        int age
+        string gender
+        string rank
+        string research_specialty
+        int dept_no FK
+    }
 
-  Professor {
-    char(9) ssn PK
-    text name
-    int age
-    gender gender
-    text rank
-    text specialty
-    varchar(10) dept_no FK
-  }
+    DEPARTMENT {
+        int dept_no PK
+        string dept_name
+        string main_office
+        string chair_ssn FK
+    }
 
-  Project {
-    varchar(12) project_no PK
-    text sponsor_name
-    date start_date
-    date end_date
-    numeric budget
-    char(9) pi_ssn FK
-  }
+    PROJECT {
+        int project_no PK
+        string sponsor_name
+        date start_date
+        date end_date
+        numeric budget
+        string pi_ssn FK
+    }
 
-  GradStudent {
-    char(9) ssn PK
-    text name
-    int age
-    gender gender
-    text degree_program
-    varchar(10) major_dept_no FK
-    int entry_year
-  }
+    GRADUATE_STUDENT {
+        string ssn PK
+        string name
+        int age
+        string gender
+        string degree_program
+        int major_dept_no FK
+        string advisor_ssn FK
+    }
 
-  Faculty_Project {
-    varchar(12) project_no FK
-    char(9) prof_ssn FK
-    PK (project_no, prof_ssn)
-  }
+    PROJECT_PROFESSOR {
+        int project_no FK
+        string professor_ssn FK
+    }
 
-  Student_Project {
-    varchar(12) project_no FK
-    char(9) student_ssn FK
-    PK (project_no, student_ssn)
-  }
+    PROJECT_STUDENT {
+        int project_no FK
+        string student_ssn FK
+    }
 
-  Student_Advising {
-    char(9) student_ssn PK FK
-    char(9) advisor_ssn FK
-  }
+    %% Relationships
+    DEPARTMENT ||--o{ PROFESSOR : "has"
+    DEPARTMENT ||--o{ GRADUATE_STUDENT : "includes"
+    PROFESSOR ||--o{ PROJECT : "manages (PI)"
+    PROJECT ||--o{ PROJECT_PROFESSOR : "co-investigators"
+    PROJECT ||--o{ PROJECT_STUDENT : "research assistants"
+    GRADUATE_STUDENT ||--|{ GRADUATE_STUDENT : "advisor"
 
-  Department ||--o{ Professor : has
-  Department ||--|| Professor : "has 1 chair"
-  Professor }o--|| Department : "works in"
-  Project ||--|| Professor : "managed by (PI)"
-  Project }o--o{ Professor : "co-investigators"
-  Project }o--o{ GradStudent : "RAs"
-  GradStudent }o--|| Department : "major dept"
-  GradStudent ||--|| GradStudent : "advisor-of"
 ```
 
 ## Assumptions & constraints not fully expressible in ER
