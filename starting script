@@ -1,125 +1,267 @@
--- =========================================================
--- 1) Departments
--- =========================================================
-CREATE TABLE departments (
-    dept_no      SERIAL PRIMARY KEY,
-    dept_name    VARCHAR(100) NOT NULL UNIQUE,
-    main_office  VARCHAR(100) NOT NULL,
-    -- Will set chairman_ssn FK after professors table exists
-    chairman_ssn CHAR(9) UNIQUE
+
+-- =============================================================
+-- University DB Project — Schema, Sample Data, Functions, Triggers
+-- Target: PostgreSQL on cs1.calstatela.edu
+-- Author: Javier Martinez, Benjamin Saucedo, Troy Rana
+-- =============================================================
+
+-- Safety: re-run friendly
+DROP SCHEMA IF EXISTS university CASCADE;
+CREATE SCHEMA university;
+SET search_path = university;
+
+-- =====================
+-- Enumerations / domains
+-- =====================
+DO $$ BEGIN
+   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'gender_enum') THEN
+      CREATE TYPE gender_enum AS ENUM ('F','M','O');
+   END IF;
+END $$;
+
+-- =====================
+-- Core entities
+-- =====================
+CREATE TABLE Department (
+  dept_no        VARCHAR(10) PRIMARY KEY,
+  dept_name      TEXT NOT NULL UNIQUE,
+  main_office    TEXT NOT NULL,
+  chair_ssn      CHAR(9) UNIQUE  -- exactly one chair per department
 );
 
--- =========================================================
--- 2) Professors
---    Each professor works in exactly one department
--- =========================================================
-CREATE TABLE professors (
-    ssn                CHAR(9) PRIMARY KEY,
-    prof_name          VARCHAR(100) NOT NULL,
-    age                INTEGER NOT NULL CHECK (age BETWEEN 18 AND 100),
-    gender             CHAR(1) NOT NULL CHECK (gender IN ('M','F','X')),
-    rank               VARCHAR(20) NOT NULL CHECK (rank IN ('Assistant','Associate','Full')),
-    research_specialty VARCHAR(120) NOT NULL,
-    dept_no            INTEGER NOT NULL,
-    CONSTRAINT fk_prof_dept
-        FOREIGN KEY (dept_no) REFERENCES departments(dept_no)
-            ON UPDATE CASCADE
-            ON DELETE RESTRICT
+CREATE TABLE Professor (
+  ssn            CHAR(9) PRIMARY KEY,
+  name           TEXT NOT NULL,
+  age            INTEGER CHECK (age > 0),
+  gender         gender_enum NOT NULL,
+  rank           TEXT NOT NULL, -- e.g., Assistant, Associate, Full
+  specialty      TEXT NOT NULL,
+  dept_no        VARCHAR(10) NOT NULL REFERENCES Department(dept_no) ON UPDATE CASCADE ON DELETE RESTRICT
 );
 
--- After professors exist: make department chairman reference a professor.
--- (Basic FK only; "chair is in same department" rule would need a trigger,
--- which we are intentionally not using here.)
-ALTER TABLE departments
-ADD CONSTRAINT fk_dept_chair
-FOREIGN KEY (chairman_ssn) REFERENCES professors(ssn)
-    ON UPDATE CASCADE
-    ON DELETE SET NULL;
+-- Back-reference chair constraint (chair must be a professor in the same dept)
+ALTER TABLE Department
+  ADD CONSTRAINT fk_chair_prof
+  FOREIGN KEY (chair_ssn) REFERENCES Professor(ssn) ON UPDATE CASCADE ON DELETE SET NULL;
 
--- =========================================================
--- 3) Graduate Students
---    Each grad student has one major department and an optional student advisor
--- =========================================================
-CREATE TABLE grad_students (
-    ssn             CHAR(9) PRIMARY KEY,
-    stu_name        VARCHAR(100) NOT NULL,
-    age             INTEGER NOT NULL CHECK (age BETWEEN 18 AND 100),
-    gender          CHAR(1) NOT NULL CHECK (gender IN ('M','F','X')),
-    degree_program  VARCHAR(10) NOT NULL CHECK (degree_program IN ('MS','PhD')),
-    major_dept_no   INTEGER NOT NULL,
-    advisor_ssn     CHAR(9),
-    CONSTRAINT fk_student_dept
-        FOREIGN KEY (major_dept_no) REFERENCES departments(dept_no)
-            ON UPDATE CASCADE
-            ON DELETE RESTRICT,
-    CONSTRAINT fk_student_advisor
-        FOREIGN KEY (advisor_ssn) REFERENCES grad_students(ssn)
-            ON UPDATE CASCADE
-            ON DELETE SET NULL,
-    CONSTRAINT chk_student_not_self_advisor
-        CHECK (advisor_ssn IS NULL OR advisor_ssn <> ssn)
+-- Ensure chair (if set) belongs to that department
+CREATE OR REPLACE FUNCTION chair_in_department() RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.chair_ssn IS NOT NULL THEN
+    PERFORM 1 FROM Professor p WHERE p.ssn = NEW.chair_ssn AND p.dept_no = NEW.dept_no;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Chair (SSN=%) must be a professor in department %', NEW.chair_ssn, NEW.dept_no;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_chair_in_dept
+  BEFORE INSERT OR UPDATE ON Department
+  FOR EACH ROW EXECUTE FUNCTION chair_in_department();
+
+CREATE TABLE Project (
+  project_no     VARCHAR(12) PRIMARY KEY,
+  sponsor_name   TEXT NOT NULL,     -- e.g., NSF
+  start_date     DATE NOT NULL,
+  end_date       DATE NOT NULL,
+  budget         NUMERIC(12,2) CHECK (budget >= 0),
+  pi_ssn         CHAR(9) NOT NULL   -- exactly one professor manages each project
+      REFERENCES Professor(ssn) ON UPDATE CASCADE ON DELETE RESTRICT,
+  CHECK (end_date >= start_date)
 );
 
--- =========================================================
--- 4) Projects
---    Each project is managed by exactly one professor (PI)
--- =========================================================
-CREATE TABLE projects (
-    pno           SERIAL PRIMARY KEY,
-    sponsor_name  VARCHAR(80) NOT NULL,
-    start_date    DATE NOT NULL,
-    end_date      DATE NOT NULL,
-    budget        NUMERIC(12,2) NOT NULL CHECK (budget >= 0),
-    pi_prof_ssn   CHAR(9) NOT NULL,
-    CONSTRAINT fk_project_pi
-        FOREIGN KEY (pi_prof_ssn) REFERENCES professors(ssn)
-            ON UPDATE CASCADE
-            ON DELETE RESTRICT,
-    CONSTRAINT chk_dates
-        CHECK (end_date >= start_date)
+-- "Co-investigator" faculty working on projects (excluding PI)
+CREATE TABLE Faculty_Project (
+  project_no     VARCHAR(12) REFERENCES Project(project_no) ON UPDATE CASCADE ON DELETE CASCADE,
+  prof_ssn       CHAR(9)     REFERENCES Professor(ssn) ON UPDATE CASCADE ON DELETE CASCADE,
+  PRIMARY KEY (project_no, prof_ssn),
+  -- Ensure not accidentally adding the PI as a co-PI here
+  CONSTRAINT chk_copi_not_pi CHECK (TRUE)  -- enforced via trigger below (needs lookup)
 );
 
--- =========================================================
--- 5) Project_Faculty
--- =========================================================
-CREATE TABLE project_faculty (
-    pno        INTEGER NOT NULL,
-    prof_ssn   CHAR(9)  NOT NULL,
-    role       VARCHAR(20) NOT NULL,  -- e.g., 'CO-PI' or 'Contributor'
-    PRIMARY KEY (pno, prof_ssn),
-    CONSTRAINT fk_pf_project
-        FOREIGN KEY (pno) REFERENCES projects(pno)
-            ON UPDATE CASCADE
-            ON DELETE CASCADE,
-    CONSTRAINT fk_pf_prof
-        FOREIGN KEY (prof_ssn) REFERENCES professors(ssn)
-            ON UPDATE CASCADE
-            ON DELETE RESTRICT
+CREATE TABLE GradStudent (
+  ssn            CHAR(9) PRIMARY KEY,
+  name           TEXT NOT NULL,
+  age            INTEGER CHECK (age > 0),
+  gender         gender_enum NOT NULL,
+  degree_program TEXT NOT NULL,  -- 'M.S.' or 'Ph.D.'
+  major_dept_no  VARCHAR(10) NOT NULL REFERENCES Department(dept_no) ON UPDATE CASCADE ON DELETE RESTRICT,
+  entry_year     INTEGER CHECK (entry_year BETWEEN 1950 AND EXTRACT(YEAR FROM CURRENT_DATE)::INT)
 );
 
--- =========================================================
--- 6) Project_Students (Graduate students working on projects)
---    Many-to-many between projects and grad_students
--- =========================================================
-CREATE TABLE project_students (
-    pno      INTEGER NOT NULL,
-    stu_ssn  CHAR(9)  NOT NULL,
-    role     VARCHAR(20) NOT NULL DEFAULT 'RA',
-    PRIMARY KEY (pno, stu_ssn),
-    CONSTRAINT fk_ps_project
-        FOREIGN KEY (pno) REFERENCES projects(pno)
-            ON UPDATE CASCADE
-            ON DELETE CASCADE,
-    CONSTRAINT fk_ps_student
-        FOREIGN KEY (stu_ssn) REFERENCES grad_students(ssn)
-            ON UPDATE CASCADE
-            ON DELETE RESTRICT
+-- Student advisor (senior grad student). We cannot fully enforce "senior" in pure ER;
+-- we approximate with entry_year earlier than advisee via trigger below.
+CREATE TABLE Student_Advising (
+  student_ssn    CHAR(9) PRIMARY KEY REFERENCES GradStudent(ssn) ON UPDATE CASCADE ON DELETE CASCADE,
+  advisor_ssn    CHAR(9) NOT NULL REFERENCES GradStudent(ssn) ON UPDATE CASCADE ON DELETE RESTRICT,
+  CONSTRAINT chk_advisee_ne_advisor CHECK (student_ssn <> advisor_ssn)
 );
 
+CREATE OR REPLACE FUNCTION advisor_is_senior() RETURNS TRIGGER AS $$
+DECLARE
+  adv_year INT;
+  stu_year INT;
+BEGIN
+  SELECT entry_year INTO adv_year FROM GradStudent WHERE ssn = NEW.advisor_ssn;
+  SELECT entry_year INTO stu_year FROM GradStudent WHERE ssn = NEW.student_ssn;
+  IF adv_year IS NULL OR stu_year IS NULL THEN
+    RAISE EXCEPTION 'Advisor or student entry year missing';
+  END IF;
+  IF adv_year >= stu_year THEN
+    RAISE EXCEPTION 'Advisor (entry_year=%) must be earlier than student (entry_year=%)', adv_year, stu_year;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-CREATE INDEX idx_prof_dept ON professors(dept_no);
-CREATE INDEX idx_stud_major_dept ON grad_students(major_dept_no);
-CREATE INDEX idx_pf_prof ON project_faculty(prof_ssn);
-CREATE INDEX idx_ps_student ON project_students(stu_ssn);
+CREATE TRIGGER trg_advisor_is_senior
+  BEFORE INSERT OR UPDATE ON Student_Advising
+  FOR EACH ROW EXECUTE FUNCTION advisor_is_senior();
+
+-- Students working on projects (RAs)
+CREATE TABLE Student_Project (
+  project_no     VARCHAR(12) REFERENCES Project(project_no) ON UPDATE CASCADE ON DELETE CASCADE,
+  student_ssn    CHAR(9)     REFERENCES GradStudent(ssn) ON UPDATE CASCADE ON DELETE CASCADE,
+  PRIMARY KEY (project_no, student_ssn)
+);
+
+-- =====================
+-- Functions
+-- =====================
+
+-- (a) female_faculty(): percentage of female faculty
+CREATE OR REPLACE FUNCTION female_faculty() RETURNS NUMERIC AS $$
+DECLARE
+  total INT;
+  females INT;
+BEGIN
+  SELECT COUNT(*) INTO total FROM Professor;
+  IF total = 0 THEN
+    RETURN 0;
+  END IF;
+  SELECT COUNT(*) INTO females FROM Professor WHERE gender = 'F';
+  RETURN (females::NUMERIC * 100.0) / total;
+END;
+$$ LANGUAGE plpgsql;
+
+-- (b) total_people(pno): total PI + co-PIs + students on a project
+CREATE OR REPLACE FUNCTION total_people(pno VARCHAR) RETURNS INT AS $$
+DECLARE
+  cnt INT;
+BEGIN
+  SELECT 1 -- PI
+       + (SELECT COUNT(*) FROM Faculty_Project fp WHERE fp.project_no = pno)
+       + (SELECT COUNT(*) FROM Student_Project sp WHERE sp.project_no = pno)
+    INTO cnt
+  FROM Project p
+  WHERE p.project_no = pno;
+
+  IF cnt IS NULL THEN
+    RAISE EXCEPTION 'Project % not found', pno;
+  END IF;
+  RETURN cnt;
+END;
+$$ LANGUAGE plpgsql;
+
+-- =====================
+-- Triggers required by spec
+-- =====================
+
+-- Ensure we never insert a co-PI equal to the PI; also enforce at most 4 co-PIs
+CREATE OR REPLACE FUNCTION enforce_copi_and_limit() RETURNS TRIGGER AS $$
+DECLARE
+  project_pi CHAR(9);
+  current_copi_count INT;
+BEGIN
+  SELECT pi_ssn INTO project_pi FROM Project WHERE project_no = NEW.project_no;
+  IF project_pi IS NULL THEN
+    RAISE EXCEPTION 'Project % not found', NEW.project_no;
+  END IF;
+
+  IF NEW.prof_ssn = project_pi THEN
+    RAISE EXCEPTION 'Professor % is PI of project % and cannot be added as co-PI', NEW.prof_ssn, NEW.project_no;
+  END IF;
+
+  SELECT COUNT(*) INTO current_copi_count FROM Faculty_Project WHERE project_no = NEW.project_no;
+  IF current_copi_count >= 4 THEN
+    RAISE EXCEPTION 'Project % already has 4 co-PIs (limit)', NEW.project_no;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER faculty_restrict
+  BEFORE INSERT ON Faculty_Project
+  FOR EACH ROW EXECUTE FUNCTION enforce_copi_and_limit();
+
+-- Student: no more than two projects
+CREATE OR REPLACE FUNCTION enforce_student_project_limit() RETURNS TRIGGER AS $$
+DECLARE
+  n INT;
+BEGIN
+  SELECT COUNT(*) INTO n FROM Student_Project WHERE student_ssn = NEW.student_ssn;
+  IF n >= 2 THEN
+    RAISE EXCEPTION 'Student % already works on two projects (limit)', NEW.student_ssn;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER student_restrict
+  BEFORE INSERT ON Student_Project
+  FOR EACH ROW EXECUTE FUNCTION enforce_student_project_limit();
+
+-- =====================
+-- Sample data
+-- =====================
+
+INSERT INTO Department (dept_no, dept_name, main_office) VALUES
+  ('CS','Computer Science','E&T 321'),
+  ('EE','Electrical Engineering','E&T 210');
+
+INSERT INTO Professor (ssn, name, age, gender, rank, specialty, dept_no) VALUES
+  ('111223333','Alice Smith',45,'F','Associate','Databases','CS'),
+  ('222334444','Bob Johnson',52,'M','Full','Networks','CS'),
+  ('333445555','Carmen Lee',38,'F','Assistant','Embedded Systems','EE'),
+  ('444556666','Diego Perez',60,'M','Full','Security','CS');
+
+-- Set chairs
+UPDATE Department SET chair_ssn = '222334444' WHERE dept_no='CS';
+UPDATE Department SET chair_ssn = '333445555' WHERE dept_no='EE';
+
+INSERT INTO GradStudent (ssn, name, age, gender, degree_program, major_dept_no, entry_year) VALUES
+  ('555667777','Evan Kim',25,'M','M.S.','CS',2024),
+  ('666778888','Fatima Noor',27,'F','Ph.D.','CS',2023),
+  ('777889999','George Yang',26,'M','M.S.','EE',2024),
+  ('888990000','Hannah Park',29,'F','Ph.D.','CS',2022);
+
+-- Advising (advisor must have earlier entry_year)
+INSERT INTO Student_Advising (student_ssn, advisor_ssn) VALUES
+  ('555667777','666778888'), -- Evan advised by Fatima
+  ('666778888','888990000'); -- Fatima advised by Hannah
+
+INSERT INTO Project (project_no, sponsor_name, start_date, end_date, budget, pi_ssn) VALUES
+  ('P100','NSF','2025-01-01','2025-12-31',250000,'111223333'), -- PI Alice
+  ('P200','DoD','2025-02-01','2026-01-31',500000,'222334444'); -- PI Bob
+
+-- Co-PIs (max 4)
+INSERT INTO Faculty_Project (project_no, prof_ssn) VALUES
+  ('P100','222334444'),
+  ('P100','333445555'),
+  ('P200','111223333');
+
+-- Student RAs (max two projects per student)
+INSERT INTO Student_Project (project_no, student_ssn) VALUES
+  ('P100','555667777'),
+  ('P100','666778888'),
+  ('P200','666778888'); -- Fatima now on two projects
+
+-- Try it:
+-- SELECT female_faculty();
+-- SELECT total_people('P100');
+
 
 
