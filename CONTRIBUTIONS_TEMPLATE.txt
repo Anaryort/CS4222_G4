@@ -1,0 +1,30 @@
+
+Group: CS4222 Group 4
+Course / Section: <CS4222-01>
+Instructor: Huiping Guo 
+
+Member Contributions
+--------------------
+- Javier Martinez — 33.3333% — 
+Designed the conceptual ER diagram and determined all entity and relationship types (Professors, Projects, Students, Departments, etc.). 
+Wrote and verified the SQL CREATE TABLE statements, ensuring all primary/foreign keys and constraints matched the ER model.
+Populated the database with sample data for testing and ensured referential integrity.
+
+
+- Benjamin Saucedo — 33.3333% — 
+Implemented the stored procedures and triggers in PostgreSQL:
+female_faculty() function to compute the percentage of female faculty.
+total_people(pno) function to count all participants per project.
+faculty_restrict and student_restrict triggers for constraint enforcement.
+Debugged and validated the PL/pgSQL code directly in DBeaver using test data.
+Documented the database logic for inclusion in the final report.
+
+
+- Troy Rana — 33.3333% — 
+Developed the Java JDBC application, including connection setup to cs1.calstatela.edu.
+Created a simple menu-driven console interface for:
+Adding/removing projects
+Displaying student information, advisor, and department
+Displaying projects per faculty
+Calling stored functions (female_faculty() and total_people())
+Tested and refined the application for usability and correct output.
